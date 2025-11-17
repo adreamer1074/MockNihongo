@@ -24,6 +24,12 @@ def start_attempt(
     if not exam:
         raise HTTPException(status_code=404, detail="Exam not found")
     
+    # 受験モードが指定されている場合は試験のmodeを更新
+    if attempt_data.mode:
+        exam.mode = attempt_data.mode
+        db.commit()
+        db.refresh(exam)
+    
     # Attemptを作成
     new_attempt = Attempt(
         exam_id=exam.id,
@@ -128,6 +134,8 @@ def finish_attempt(
     # Attempt更新
     attempt.ended_at = datetime.utcnow()
     attempt.score = score
+    attempt.total_score = score
+    attempt.is_passed = score >= exam.config.get("pass_threshold", 60) if exam.config else None
     attempt.raw_result = {"section_scores": section_scores}
     
     db.commit()

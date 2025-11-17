@@ -13,9 +13,31 @@ class ExamMode(str, enum.Enum):
     PRACTICE = "practice"  # 模擬試験（時間制限なし）
 
 class QuestionType(str, enum.Enum):
-    MULTIPLE_CHOICE_SINGLE = "multiple_choice_single"
-    MULTIPLE_CHOICE_MULTIPLE = "multiple_choice_multiple"
-    FILL_BLANK = "fill_blank"
+    # 文字・語彙
+    KANJI_READING = "kanji_reading"
+    ORTHOGRAPHY = "orthography"
+    WORD_FORMATION = "word_formation"
+    CONTEXTUAL_DEFINITION = "contextual_definition"
+    PARAPHRASE = "paraphrase"
+    USAGE = "usage"
+    # 文法
+    GRAMMAR_FORM = "grammar_form"
+    SENTENCE_COMPOSITION = "sentence_composition"
+    TEXT_GRAMMAR = "text_grammar"
+    # 読解
+    SHORT_COMPREHENSION = "short_comprehension"
+    MEDIUM_COMPREHENSION = "medium_comprehension"
+    LONG_COMPREHENSION = "long_comprehension"
+    INTEGRATED_COMPREHENSION = "integrated_comprehension"
+    ASSERTION_COMPREHENSION = "assertion_comprehension"
+    INFORMATION_RETRIEVAL = "information_retrieval"
+    # 聴解
+    TASK_COMPREHENSION = "task_comprehension"
+    POINT_COMPREHENSION = "point_comprehension"
+    OUTLINE_COMPREHENSION = "outline_comprehension"
+    UTTERANCE_EXPRESSION = "utterance_expression"
+    IMMEDIATE_RESPONSE = "immediate_response"
+    INTEGRATED_LISTENING = "integrated_listening"
 
 class JLPTLevel(str, enum.Enum):
     N5 = "N5"
@@ -28,7 +50,8 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    email = Column(String, unique=True, index=True, nullable=False)
+    username = Column(String, unique=True, index=True, nullable=False)
+    email = Column(String, unique=True, index=True, nullable=True)
     name = Column(String, nullable=False)
     hashed_password = Column(String, nullable=False)
     is_verified = Column(Boolean, default=False)
@@ -81,7 +104,7 @@ class Question(Base):
     choices = Column(JSON, nullable=True)  # 選択肢の配列
     answer = Column(JSON, nullable=False)  # 正解（配列形式）
     explanation_text = Column(Text, nullable=True)
-    metadata = Column(JSON, default={})  # 追加情報（難易度など）
+    question_metadata = Column(JSON, default={})  # 追加情報（underline_word, star_position, passage, audio_url など）
 
     # Relationships
     section = relationship("Section", back_populates="questions")
@@ -96,6 +119,8 @@ class Attempt(Base):
     started_at = Column(DateTime(timezone=True), server_default=func.now())
     ended_at = Column(DateTime(timezone=True), nullable=True)
     score = Column(Integer, nullable=True)
+    total_score = Column(Integer, nullable=True)
+    is_passed = Column(Boolean, nullable=True)
     raw_result = Column(JSON, default={})  # セクション別スコアなど
 
     # Relationships

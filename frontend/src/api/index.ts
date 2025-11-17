@@ -68,6 +68,18 @@ export const examAPI = {
   deleteExam: async (examId: number): Promise<void> => {
     await api.delete(`/exams/${examId}`);
   },
+
+  // セクション作成
+  createSection: async (examId: number, data: any): Promise<any> => {
+    const response = await api.post(`/exams/${examId}/sections`, data);
+    return response.data;
+  },
+
+  // 問題作成
+  createQuestion: async (examId: number, sectionId: number, data: any): Promise<any> => {
+    const response = await api.post(`/exams/${examId}/sections/${sectionId}/questions`, data);
+    return response.data;
+  },
 };
 
 // 試験受験API

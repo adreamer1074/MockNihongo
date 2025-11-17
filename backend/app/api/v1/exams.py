@@ -141,29 +141,45 @@ def create_section(
     if exam.creator_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
     
-    new_section = Section(**section_data.dict())
+    # exam_idをパスから設定
+    section_dict = section_data.dict()
+    section_dict['exam_id'] = exam_id
+    
+    new_section = Section(**section_dict)
     db.add(new_section)
     db.commit()
     db.refresh(new_section)
     return new_section
 
-@router.post("/sections/{section_id}/questions", status_code=status.HTTP_201_CREATED)
+@router.post("/{exam_id}/sections/{section_id}/questions", status_code=status.HTTP_201_CREATED)
 def create_question(
+    exam_id: int,
     section_id: int,
     question_data: QuestionCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """問題作成"""
-    section = db.query(Section).filter(Section.id == section_id).first()
-    if not section:
-        raise HTTPException(status_code=404, detail="Section not found")
+    # 試験とセクションの存在確認
+    exam = db.query(Exam).filter(Exam.id == exam_id).first()
+    if not exam:
+        raise HTTPException(status_code=404, detail="Exam not found")
     
-    exam = db.query(Exam).filter(Exam.id == section.exam_id).first()
     if exam.creator_id != current_user.id:
         raise HTTPException(status_code=403, detail="Not authorized")
     
-    new_question = Question(**question_data.dict())
+    section = db.query(Section).filter(
+        Section.id == section_id,
+        Section.exam_id == exam_id
+    ).first()
+    if not section:
+        raise HTTPException(status_code=404, detail="Section not found")
+    
+    # section_idをパスから設定
+    question_dict = question_data.dict()
+    question_dict['section_id'] = section_id
+    
+    new_question = Question(**question_dict)
     db.add(new_question)
     db.commit()
     db.refresh(new_question)

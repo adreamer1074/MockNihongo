@@ -13,9 +13,31 @@ class ExamMode(str, Enum):
     PRACTICE = "practice"
 
 class QuestionType(str, Enum):
-    MULTIPLE_CHOICE_SINGLE = "multiple_choice_single"
-    MULTIPLE_CHOICE_MULTIPLE = "multiple_choice_multiple"
-    FILL_BLANK = "fill_blank"
+    # 文字・語彙
+    KANJI_READING = "kanji_reading"
+    ORTHOGRAPHY = "orthography"
+    WORD_FORMATION = "word_formation"
+    CONTEXTUAL_DEFINITION = "contextual_definition"
+    PARAPHRASE = "paraphrase"
+    USAGE = "usage"
+    # 文法
+    GRAMMAR_FORM = "grammar_form"
+    SENTENCE_COMPOSITION = "sentence_composition"
+    TEXT_GRAMMAR = "text_grammar"
+    # 読解
+    SHORT_COMPREHENSION = "short_comprehension"
+    MEDIUM_COMPREHENSION = "medium_comprehension"
+    LONG_COMPREHENSION = "long_comprehension"
+    INTEGRATED_COMPREHENSION = "integrated_comprehension"
+    ASSERTION_COMPREHENSION = "assertion_comprehension"
+    INFORMATION_RETRIEVAL = "information_retrieval"
+    # 聴解
+    TASK_COMPREHENSION = "task_comprehension"
+    POINT_COMPREHENSION = "point_comprehension"
+    OUTLINE_COMPREHENSION = "outline_comprehension"
+    UTTERANCE_EXPRESSION = "utterance_expression"
+    IMMEDIATE_RESPONSE = "immediate_response"
+    INTEGRATED_LISTENING = "integrated_listening"
 
 class JLPTLevel(str, Enum):
     N5 = "N5"
@@ -26,7 +48,8 @@ class JLPTLevel(str, Enum):
 
 # User Schemas
 class UserBase(BaseModel):
-    email: EmailStr
+    username: str
+    email: Optional[EmailStr] = None
     name: str
 
 class UserCreate(UserBase):
@@ -53,16 +76,16 @@ class TokenData(BaseModel):
 
 # Question Schemas
 class QuestionBase(BaseModel):
-    section_id: int
     order: int
     type: QuestionType
     prompt_text: str
     choices: Optional[List[str]] = None
     explanation_text: Optional[str] = None
-    metadata: Optional[dict] = {}
+    question_metadata: Optional[dict] = {}  # metadata予約語を避けてquestion_metadataに変更
 
 class QuestionCreate(QuestionBase):
     answer: List[str]
+    section_id: Optional[int] = None  # URLパスから設定されるのでオプション
 
 class QuestionUpdate(BaseModel):
     prompt_text: Optional[str] = None
@@ -72,6 +95,7 @@ class QuestionUpdate(BaseModel):
 
 class Question(QuestionBase):
     id: int
+    section_id: int
     # answerは含めない（試験中は見せない）
 
     class Config:
@@ -82,17 +106,17 @@ class QuestionWithAnswer(Question):
 
 # Section Schemas
 class SectionBase(BaseModel):
-    exam_id: int
     title: str
     order: int
     time_limit_seconds: Optional[int] = None
     weight: int = 1
 
 class SectionCreate(SectionBase):
-    pass
+    exam_id: Optional[int] = None  # URLパスから設定されるのでオプション
 
 class Section(SectionBase):
     id: int
+    exam_id: int
     questions: List[Question] = []
 
     class Config:
@@ -100,6 +124,7 @@ class Section(SectionBase):
 
 class SectionWithAnswers(SectionBase):
     id: int
+    exam_id: int
     questions: List[QuestionWithAnswer] = []
 
     class Config:
@@ -161,6 +186,7 @@ class AttemptItemResponse(BaseModel):
 
 class AttemptCreate(BaseModel):
     exam_id: int
+    mode: Optional[ExamMode] = None  # 受験モード（practice/formal）
 
 class AttemptStart(BaseModel):
     attempt_id: int
@@ -183,6 +209,8 @@ class Attempt(BaseModel):
     started_at: datetime
     ended_at: Optional[datetime]
     score: Optional[int]
+    total_score: Optional[int]
+    is_passed: Optional[bool]
     raw_result: Optional[dict]
 
     class Config:
