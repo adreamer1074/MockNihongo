@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { examAPI, attemptAPI } from '../api';
-import { Exam } from '../types';
+import { Exam, ExamMode } from '../types';
 
 const ExamDetail: React.FC = () => {
   const { examId } = useParams<{ examId: string }>();
   const navigate = useNavigate();
   const [exam, setExam] = useState<Exam | null>(null);
   const [loading, setLoading] = useState(true);
+  const [selectedMode, setSelectedMode] = useState<ExamMode>('practice');
 
   useEffect(() => {
     if (examId) {
@@ -30,7 +31,10 @@ const ExamDetail: React.FC = () => {
     if (!exam) return;
 
     try {
-      const attemptData = await attemptAPI.startAttempt({ exam_id: exam.id });
+      const attemptData = await attemptAPI.startAttempt({ 
+        exam_id: exam.id,
+        mode: selectedMode 
+      });
       navigate(`/exams/${exam.id}/take?attempt=${attemptData.attempt_id}`);
     } catch (error) {
       console.error('Failed to start exam:', error);
@@ -58,18 +62,54 @@ const ExamDetail: React.FC = () => {
     <div className="max-w-4xl mx-auto">
       <div className="bg-white rounded-lg shadow-md p-8">
         <div className="mb-6">
-          <div className="flex items-center gap-4 mb-4">
-            <span className="inline-block px-4 py-2 text-lg font-semibold text-primary-700 bg-primary-100 rounded-full">
-              {exam.level}
-            </span>
-            <span className="text-sm text-gray-600">
-              {exam.mode === 'formal' ? '本格試験（時間制限あり）' : '模擬試験（時間制限なし）'}
-            </span>
-          </div>
+          <span className="inline-block px-4 py-2 text-lg font-semibold text-primary-700 bg-primary-100 rounded-full mb-4">
+            {exam.level}
+          </span>
           
           <h1 className="text-3xl font-bold text-gray-900 mb-4">
             {exam.title}
           </h1>
+        </div>
+
+        <div className="mb-8">
+          <h2 className="text-xl font-semibold mb-4">受験モード選択</h2>
+          <div className="space-y-3">
+            <label className="flex items-start p-4 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
+              style={{ borderColor: selectedMode === 'practice' ? '#2563eb' : '#e5e7eb' }}>
+              <input
+                type="radio"
+                name="mode"
+                value="practice"
+                checked={selectedMode === 'practice'}
+                onChange={(e) => setSelectedMode(e.target.value as ExamMode)}
+                className="mt-1 mr-3"
+              />
+              <div>
+                <div className="font-semibold text-gray-900">練習モード</div>
+                <div className="text-sm text-gray-600">
+                  時間制限なし、問題ごとに正解・解説を確認できます
+                </div>
+              </div>
+            </label>
+
+            <label className="flex items-start p-4 border-2 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors"
+              style={{ borderColor: selectedMode === 'formal' ? '#2563eb' : '#e5e7eb' }}>
+              <input
+                type="radio"
+                name="mode"
+                value="formal"
+                checked={selectedMode === 'formal'}
+                onChange={(e) => setSelectedMode(e.target.value as ExamMode)}
+                className="mt-1 mr-3"
+              />
+              <div>
+                <div className="font-semibold text-gray-900">本格試験モード</div>
+                <div className="text-sm text-gray-600">
+                  時間制限あり、試験終了後に結果を確認できます
+                </div>
+              </div>
+            </label>
+          </div>
         </div>
 
         <div className="mb-8">

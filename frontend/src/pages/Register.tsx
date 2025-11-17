@@ -7,8 +7,8 @@ const Register: React.FC = () => {
   const navigate = useNavigate();
   const { setAuth } = useAuthStore();
   const [formData, setFormData] = useState({
+    username: '',
     email: '',
-    name: '',
     password: '',
     confirmPassword: '',
   });
@@ -35,14 +35,15 @@ const Register: React.FC = () => {
 
     try {
       const user = await authAPI.register({
-        email: formData.email,
-        name: formData.name,
+        username: formData.username,
+        email: formData.email || undefined,
+        name: formData.username,
         password: formData.password,
       });
 
       // 登録後、自動ログイン
       const tokenData = await authAPI.login({
-        username: formData.email,
+        username: formData.username,
         password: formData.password,
       });
 
@@ -68,14 +69,14 @@ const Register: React.FC = () => {
         
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700">
-              メールアドレス
+            <label htmlFor="username" className="block text-sm font-medium text-gray-700">
+              ユーザー名
             </label>
             <input
-              type="email"
-              id="email"
-              name="email"
-              value={formData.email}
+              type="text"
+              id="username"
+              name="username"
+              value={formData.username}
               onChange={handleChange}
               required
               className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
@@ -83,16 +84,15 @@ const Register: React.FC = () => {
           </div>
           
           <div>
-            <label htmlFor="name" className="block text-sm font-medium text-gray-700">
-              名前
+            <label htmlFor="email" className="block text-sm font-medium text-gray-700">
+              メールアドレス（任意）
             </label>
             <input
-              type="text"
-              id="name"
-              name="name"
-              value={formData.name}
+              type="email"
+              id="email"
+              name="email"
+              value={formData.email}
               onChange={handleChange}
-              required
               className="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-primary-500 focus:border-primary-500"
             />
           </div>

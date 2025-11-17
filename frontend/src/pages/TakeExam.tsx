@@ -22,6 +22,7 @@ const TakeExam: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [feedback, setFeedback] = useState<Map<number, any>>(new Map());
+  const [showFeedbackFor, setShowFeedbackFor] = useState<Set<number>>(new Set()); // 答えを表示する問題ID
 
   useEffect(() => {
     if (examId) {
@@ -73,25 +74,10 @@ const TakeExam: React.FC = () => {
   const handleAnswerChange = (value: string) => {
     if (!currentQuestion) return;
 
-    const currentAnswers = answers.get(currentQuestion.id) || [];
-    let newAnswers: string[];
-
-    if (currentQuestion.type === 'multiple_choice_single') {
-      newAnswers = [value];
-    } else {
-      if (currentAnswers.includes(value)) {
-        newAnswers = currentAnswers.filter(v => v !== value);
-      } else {
-        newAnswers = [...currentAnswers, value];
-      }
-    }
+    // JLPT問題は基本的に単一選択
+    const newAnswers = [value];
 
     setAnswers(new Map(answers.set(currentQuestion.id, newAnswers)));
-
-    // 模擬モードの場合は即座にフィードバックを取得
-    if (exam?.mode === 'practice' && !feedback.has(currentQuestion.id)) {
-      submitAnswer(currentQuestion.id, newAnswers);
-    }
   };
 
   const submitAnswer = async (questionId: number, selected: string[]) => {
@@ -107,6 +93,21 @@ const TakeExam: React.FC = () => {
       }
     } catch (error) {
       console.error('Failed to submit answer:', error);
+    }
+  };
+
+  const handleShowAnswer = async () => {
+    if (!currentQuestion || !exam) return;
+    
+    // 答えを表示済みフラグを立てる
+    const newShowFeedbackFor = new Set(showFeedbackFor);
+    newShowFeedbackFor.add(currentQuestion.id);
+    setShowFeedbackFor(newShowFeedbackFor);
+
+    // フィードバックをまだ取得していない場合は取得
+    if (!feedback.has(currentQuestion.id)) {
+      const currentAnswers = answers.get(currentQuestion.id) || [];
+      await submitAnswer(currentQuestion.id, currentAnswers);
     }
   };
 
@@ -239,7 +240,7 @@ const TakeExam: React.FC = () => {
             {currentQuestion.choices.map((choice, index) => {
               const isSelected = answers.get(currentQuestion.id)?.includes(choice) || false;
               const isCorrect = questionFeedback?.correct_answer?.includes(choice);
-              const showFeedback = exam.mode === 'practice' && questionFeedback;
+              const showFeedback = exam.mode === 'practice' && questionFeedback && showFeedbackFor.has(currentQuestion.id);
 
               return (
                 <label
@@ -255,7 +256,7 @@ const TakeExam: React.FC = () => {
                   }`}
                 >
                   <input
-                    type={currentQuestion.type === 'multiple_choice_single' ? 'radio' : 'checkbox'}
+                    type="radio"
                     name={`question-${currentQuestion.id}`}
                     value={choice}
                     checked={isSelected}
@@ -272,8 +273,20 @@ const TakeExam: React.FC = () => {
           </div>
         )}
 
+        {/* 答えを見るボタン（練習モード） */}
+        {exam.mode === 'practice' && !showFeedbackFor.has(currentQuestion.id) && (
+          <div className="mt-6">
+            <button
+              onClick={handleShowAnswer}
+              className="px-4 py-2 text-sm bg-blue-100 text-blue-700 rounded-md hover:bg-blue-200 transition-colors"
+            >
+              💡 答えを見る
+            </button>
+          </div>
+        )}
+
         {/* フィードバック（模擬モード） */}
-        {exam.mode === 'practice' && questionFeedback && (
+        {exam.mode === 'practice' && questionFeedback && showFeedbackFor.has(currentQuestion.id) && (
           <div className={`mt-6 p-4 rounded-lg ${
             questionFeedback.is_correct ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
           }`}>

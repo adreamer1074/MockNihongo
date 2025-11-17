@@ -10,8 +10,16 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import CreateExam from './pages/CreateExam';
 import MyPage from './pages/MyPage';
+import { useAuthStore } from './store/authStore';
 
 const App: React.FC = () => {
+  const { initAuth } = useAuthStore();
+
+  // アプリ起動時に認証情報を復元
+  React.useEffect(() => {
+    initAuth();
+  }, [initAuth]);
+
   return (
     <Router>
       <Layout>

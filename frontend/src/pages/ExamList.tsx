@@ -85,7 +85,7 @@ const ExamList: React.FC = () => {
               </h3>
               
               <p className="text-sm text-gray-600 mb-4">
-                {exam.sections.length} セクション
+                {exam.sections?.length || 0} セクション
               </p>
               
               <Link

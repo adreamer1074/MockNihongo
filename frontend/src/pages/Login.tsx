@@ -54,10 +54,10 @@ const Login: React.FC = () => {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label htmlFor="username" className="block text-sm font-medium text-gray-700">
-              メールアドレス
+              ユーザー名
             </label>
             <input
-              type="email"
+              type="text"
               id="username"
               name="username"
               value={formData.username}
