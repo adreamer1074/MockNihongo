@@ -293,6 +293,17 @@ const TakeExam: React.FC = () => {
             <p className="font-semibold mb-2">
               {questionFeedback.is_correct ? '✓ 正解です！' : '✗ 不正解です'}
             </p>
+            {questionFeedback.correct_answer && questionFeedback.correct_answer.length > 0 && currentQuestion.choices && (
+              <p className="text-sm mb-2">
+                <span className="font-semibold">正解: </span>
+                {currentQuestion.choices.map((choice, index) => {
+                  if (questionFeedback.correct_answer.includes(choice)) {
+                    return `${index + 1} (${choice})`;
+                  }
+                  return null;
+                }).filter(Boolean).join(', ')}
+              </p>
+            )}
             {questionFeedback.explanation && (
               <p className="text-sm">{questionFeedback.explanation}</p>
             )}

@@ -29,11 +29,14 @@ const MyPage: React.FC = () => {
       const myExams = allExams.filter((exam: Exam) => exam.creator_id === user?.id);
       setCreatedExams(myExams);
 
-      // 受験履歴を取得（APIがあれば）
-      // Note: 現在のAPIにはユーザーの試行履歴を取得するエンドポイントがないため、
-      // 実際にはバックエンドに GET /attempts/my-history のようなエンドポイントを追加する必要があります
-      // ここでは空配列で初期化しています
-      setAttemptHistory([]);
+      // 受験履歴を取得
+      try {
+        const history = await attemptAPI.getMyAttempts(3);
+        setAttemptHistory(history);
+      } catch (error) {
+        console.error('Failed to fetch attempt history:', error);
+        // エラーが出ても空配列のまま続行
+      }
     } catch (error) {
       console.error('Failed to fetch data:', error);
     } finally {
@@ -50,10 +53,15 @@ const MyPage: React.FC = () => {
       await examAPI.deleteExam(examId);
       setCreatedExams(createdExams.filter((exam) => exam.id !== examId));
       alert('試験を削除しました');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to delete exam:', error);
-      alert('試験の削除に失敗しました');
+      const message = error.response?.data?.detail || '試験の削除に失敗しました';
+      alert(message);
     }
+  };
+
+  const handleEditExam = (examId: number) => {
+    navigate(`/edit-exam/${examId}`);
   };
 
   const handleTogglePublic = async (exam: Exam) => {
@@ -184,6 +192,12 @@ const MyPage: React.FC = () => {
                         詳細
                       </button>
                       <button
+                        onClick={() => handleEditExam(exam.id)}
+                        className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 text-sm"
+                      >
+                        編集
+                      </button>
+                      <button
                         onClick={() => handleTogglePublic(exam)}
                         className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 text-sm"
                       >
@@ -242,14 +256,26 @@ const MyPage: React.FC = () => {
                   {attemptHistory.map((attempt) => (
                     <tr key={attempt.id}>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm font-medium text-gray-900">
-                          {/* 試験名を表示するにはexam情報が必要 */}
-                          試験 #{attempt.exam_id}
+                        <div className="flex flex-col">
+                          <div className="text-sm font-medium text-gray-900">
+                            {attempt.exam?.title || `試験 #${attempt.exam_id}`}
+                          </div>
+                          {attempt.exam?.level && (
+                            <span className="text-xs text-gray-500 mt-1">
+                              {attempt.exam.level}
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm text-gray-500">
-                          {new Date(attempt.started_at).toLocaleDateString('ja-JP')}
+                          {new Date(attempt.started_at).toLocaleDateString('ja-JP', {
+                            year: 'numeric',
+                            month: '2-digit',
+                            day: '2-digit',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })}
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -258,7 +284,7 @@ const MyPage: React.FC = () => {
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
-                        {attempt.is_passed !== null && (
+                        {attempt.is_passed !== null ? (
                           <span
                             className={`px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full ${
                               attempt.is_passed
@@ -268,15 +294,21 @@ const MyPage: React.FC = () => {
                           >
                             {attempt.is_passed ? '合格' : '不合格'}
                           </span>
+                        ) : (
+                          <span className="text-xs text-gray-400">未完了</span>
                         )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        <button
-                          onClick={() => navigate(`/results/${attempt.id}`)}
-                          className="text-primary-600 hover:text-primary-900"
-                        >
-                          詳細を見る
-                        </button>
+                        {attempt.ended_at ? (
+                          <button
+                            onClick={() => navigate(`/results/${attempt.id}`)}
+                            className="text-primary-600 hover:text-primary-900"
+                          >
+                            詳細を見る
+                          </button>
+                        ) : (
+                          <span className="text-gray-400">受験中</span>
+                        )}
                       </td>
                     </tr>
                   ))}

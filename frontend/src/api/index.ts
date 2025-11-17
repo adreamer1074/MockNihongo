@@ -106,4 +106,40 @@ export const attemptAPI = {
     const response = await api.get(`/attempts/${attemptId}`);
     return response.data;
   },
+  
+  getMyAttempts: async (limit: number = 3): Promise<Attempt[]> => {
+    const response = await api.get('/attempts/my-history', {
+      params: { limit }
+    });
+    return response.data;
+  },
+};
+
+// PDF API
+export const pdfAPI = {
+  uploadPDF: async (file: File): Promise<any> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    const response = await api.post('/pdf/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+      timeout: 60000, // 60秒でタイムアウト
+    });
+    return response.data;
+  },
+  
+  uploadText: async (file: File): Promise<any> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    const response = await api.post('/pdf/upload-text', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+      timeout: 30000, // 30秒でタイムアウト
+    });
+    return response.data;
+  },
 };

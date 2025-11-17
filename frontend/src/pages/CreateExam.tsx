@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { examAPI } from '../api';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+import { examAPI, pdfAPI } from '../api';
 import { useAuthStore } from '../store/authStore';
 import { JLPTLevel, ExamType, ExamMode, QuestionType } from '../types';
 import { JLPT_SECTIONS, QUESTION_TYPE_INFO, AVAILABLE_QUESTION_TYPES, getQuestionTypesForSection } from '../constants/jlpt';
@@ -30,10 +30,21 @@ interface Question {
 
 const CreateExam: React.FC = () => {
   const navigate = useNavigate();
+  const { examId } = useParams<{ examId: string }>();
+  const isEditMode = !!examId;
   const { isAuthenticated } = useAuthStore();
-  const [activeTab, setActiveTab] = useState<'manual' | 'pdf'>('manual');
+  const [activeTab, setActiveTab] = useState<'manual' | 'pdf' | 'text'>('manual');
   const [loading, setLoading] = useState(false);
   const [editingQuestionIndex, setEditingQuestionIndex] = useState<number | null>(null);
+  const [expandedQuestions, setExpandedQuestions] = useState<Set<number>>(new Set());
+  const [editingQuestions, setEditingQuestions] = useState<Set<number>>(new Set());
+
+  // PDF/テキスト関連
+  const [pdfFile, setPdfFile] = useState<File | null>(null);
+  const [textFile, setTextFile] = useState<File | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<string>('');
+  const [extractedQuestions, setExtractedQuestions] = useState<any[]>([]);
+  const [extractedTextPreview, setExtractedTextPreview] = useState<string>('');
 
   // 試験基本情報
   const [title, setTitle] = useState('');
@@ -58,8 +69,54 @@ const CreateExam: React.FC = () => {
     meta: {}
   });
 
-  // レベル変更時にJLPT標準セクションを設定
+  // 編集モード時に既存の試験データを読み込む
+  useEffect(() => {
+    if (isEditMode && examId) {
+      loadExamData(parseInt(examId));
+    }
+  }, [isEditMode, examId]);
+
+  const loadExamData = async (id: number) => {
+    setLoading(true);
+    try {
+      const exam = await examAPI.getExam(id);
+      setTitle(exam.title);
+      setLevel(exam.level);
+      setIsPublic(exam.is_public);
+      setPassThreshold(exam.pass_threshold);
+      
+      // セクションと問題をロード
+      if (exam.sections && exam.sections.length > 0) {
+        const loadedSections = exam.sections.map((sec: any) => ({
+          title: sec.title,
+          order: sec.order,
+          time_limit_seconds: sec.time_limit_seconds,
+          weight: sec.weight,
+          questions: sec.questions.map((q: any) => ({
+            order: q.order,
+            type: q.type,
+            prompt_text: q.prompt_text,
+            choices: Array.isArray(q.choices) ? q.choices : [],
+            answer: Array.isArray(q.answer) ? q.answer : [],
+            explanation_text: q.explanation_text || '',
+            meta: q.meta || {}
+          }))
+        }));
+        setSections(loadedSections);
+      }
+    } catch (error) {
+      console.error('Failed to load exam:', error);
+      alert('試験データの読み込みに失敗しました');
+      navigate('/my-page');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // レベル変更時にJLPT標準セクションを設定（編集モードではスキップ）
   React.useEffect(() => {
+    if (isEditMode) return; // 編集モードでは既存データを使用
+    
     const standardSections = JLPT_SECTIONS[level].map((sec, idx) => ({
       title: sec.title,
       order: idx + 1,
@@ -69,7 +126,7 @@ const CreateExam: React.FC = () => {
     }));
     setSections(standardSections);
     setCurrentSectionIndex(0);
-  }, [level]);
+  }, [level, isEditMode]);
 
   // セクション変更時に問題タイプを適切なものに変更
   React.useEffect(() => {
@@ -226,6 +283,154 @@ const CreateExam: React.FC = () => {
     setSections(updated);
   };
 
+  const handlePDFUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.endsWith('.pdf')) {
+      alert('PDFファイルのみアップロード可能です');
+      return;
+    }
+
+    setPdfFile(file);
+    setUploadProgress('アップロード中...');
+    setLoading(true);
+
+    try {
+      const result = await pdfAPI.uploadPDF(file);
+      
+      if (result.success) {
+        setExtractedQuestions(result.questions);
+        setExtractedTextPreview(result.extracted_text_preview || '');
+        
+        if (result.questions.length === 0) {
+          setUploadProgress('⚠️ 問題を抽出できませんでした。PDFの形式を確認してください。');
+        } else {
+          setUploadProgress(`${result.questions.length}個の問題を抽出しました。内容を確認・編集してください。`);
+          
+          // 抽出した問題を現在のセクションに自動追加
+          if (result.questions.length > 0 && sections.length > 0) {
+            const updated = [...sections];
+            const startIndex = updated[currentSectionIndex].questions.length;
+            updated[currentSectionIndex].questions = [
+              ...updated[currentSectionIndex].questions,
+              ...result.questions.map((q: any, idx: number) => {
+                // 答えを番号から選択肢テキストに変換
+                let answerTexts: string[] = [];
+                if (q.answer && q.answer.length > 0 && q.choices && q.choices.length > 0) {
+                  answerTexts = q.answer.map((answerNum: string) => {
+                    const index = parseInt(answerNum) - 1; // 1-indexed to 0-indexed
+                    return q.choices[index] || '';
+                  }).filter((text: string) => text !== '');
+                }
+                
+                return {
+                  order: startIndex + idx + 1,
+                  type: 'kanji_reading' as QuestionType,
+                  prompt_text: q.prompt_text,
+                  choices: q.choices || ['', '', '', ''],
+                  answer: answerTexts,
+                  explanation_text: q.explanation_text || '',
+                  meta: q.metadata || {}
+                };
+              })
+            ];
+            setSections(updated);
+            
+            // 全ての問題を展開状態にする
+            const allIndices = new Set(
+              Array.from({ length: updated[currentSectionIndex].questions.length }, (_, i) => i)
+            );
+            setExpandedQuestions(allIndices);
+            
+            // 手動作成タブに切り替える（全問題を確認できるように）
+            setActiveTab('manual');
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error('PDF upload failed:', error);
+      setUploadProgress('');
+      alert('PDFのアップロードに失敗しました: ' + (error.response?.data?.detail || error.message));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleTextUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.endsWith('.txt') && !file.name.endsWith('.md')) {
+      alert('テキストファイル（.txt または .md）のみアップロード可能です');
+      return;
+    }
+
+    setTextFile(file);
+    setUploadProgress('アップロード中...');
+    setLoading(true);
+
+    try {
+      const result = await pdfAPI.uploadText(file);
+      
+      if (result.success) {
+        setExtractedQuestions(result.questions);
+        setExtractedTextPreview(result.extracted_text_preview || '');
+        
+        if (result.questions.length === 0) {
+          setUploadProgress('⚠️ 問題を抽出できませんでした。テキストの形式を確認してください。');
+        } else {
+          setUploadProgress(`${result.questions.length}個の問題を抽出しました。内容を確認・編集してください。`);
+          
+          // 抽出した問題を現在のセクションに自動追加
+          if (result.questions.length > 0 && sections.length > 0) {
+            const updated = [...sections];
+            const startIndex = updated[currentSectionIndex].questions.length;
+            updated[currentSectionIndex].questions = [
+              ...updated[currentSectionIndex].questions,
+              ...result.questions.map((q: any, idx: number) => {
+                // 答えを番号から選択肢テキストに変換
+                let answerTexts: string[] = [];
+                if (q.answer && q.answer.length > 0 && q.choices && q.choices.length > 0) {
+                  answerTexts = q.answer.map((answerNum: string) => {
+                    const index = parseInt(answerNum) - 1; // 1-indexed to 0-indexed
+                    return q.choices[index] || '';
+                  }).filter((text: string) => text !== '');
+                }
+                
+                return {
+                  order: startIndex + idx + 1,
+                  type: 'kanji_reading' as QuestionType,
+                  prompt_text: q.prompt_text,
+                  choices: q.choices || ['', '', '', ''],
+                  answer: answerTexts,
+                  explanation_text: q.explanation_text || '',
+                  meta: q.metadata || {}
+                };
+              })
+            ];
+            setSections(updated);
+            
+            // 全ての問題を展開状態にする
+            const allIndices = new Set(
+              Array.from({ length: updated[currentSectionIndex].questions.length }, (_, i) => i)
+            );
+            setExpandedQuestions(allIndices);
+            
+            // 手動作成タブに切り替える（全問題を確認できるように）
+            setActiveTab('manual');
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error('Text upload failed:', error);
+      setUploadProgress('');
+      alert('テキストファイルのアップロードに失敗しました: ' + (error.response?.data?.detail || error.message));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const cancelEdit = () => {
     setEditingQuestionIndex(null);
     setCurrentQuestion({
@@ -249,49 +454,65 @@ const CreateExam: React.FC = () => {
 
     setLoading(true);
     try {
-      // 試験を作成
-      const exam = await examAPI.createExam({
-        title,
-        level,
-        type: 'mock', // 常に模擬試験として作成
-        mode: 'practice', // デフォルトは練習モード（受験時に選択）
-        is_public: isPublic,
-        config: { pass_threshold: passThreshold }
-      });
-
-      // 各セクションと問題を作成
-      for (const section of sections) {
-        if (section.questions.length === 0) continue; // 問題がないセクションはスキップ
+      if (isEditMode && examId) {
+        // 編集モード：試験を更新
+        await examAPI.updateExam(parseInt(examId), {
+          title,
+          level,
+          type: 'mock',
+          mode: 'practice',
+          is_public: isPublic,
+          config: { pass_threshold: passThreshold }
+        });
         
-        // セクションを作成
-        const createdSection = await examAPI.createSection(exam.id, {
-          title: section.title,
-          order: section.order,
-          time_limit_seconds: section.time_limit_seconds,
-          weight: section.weight
+        // Note: セクションと問題の更新は複雑なため、
+        // 現在は基本情報のみ更新。将来的にはセクション/問題の更新APIを追加する必要があります
+        
+        alert('試験を更新しました！');
+        navigate(`/exams/${examId}`);
+      } else {
+        // 作成モード：新しい試験を作成
+        const exam = await examAPI.createExam({
+          title,
+          level,
+          type: 'mock',
+          mode: 'practice',
+          is_public: isPublic,
+          config: { pass_threshold: passThreshold }
         });
 
-        // セクションの各問題を作成
-        for (const question of section.questions) {
-          await examAPI.createQuestion(exam.id, createdSection.id, {
-            order: question.order,
-            type: question.type,
-            prompt_text: question.prompt_text,
-            choices: question.choices.filter(c => c.trim() !== ''), // 空の選択肢を除外
-            answer: question.answer,
-            explanation_text: question.explanation_text,
-            question_metadata: question.meta // question_metadataに変更
+        // 各セクションと問題を作成
+        for (const section of sections) {
+          if (section.questions.length === 0) continue;
+          
+          const createdSection = await examAPI.createSection(exam.id, {
+            title: section.title,
+            order: section.order,
+            time_limit_seconds: section.time_limit_seconds,
+            weight: section.weight
           });
+
+          for (const question of section.questions) {
+            await examAPI.createQuestion(exam.id, createdSection.id, {
+              order: question.order,
+              type: question.type,
+              prompt_text: question.prompt_text,
+              choices: question.choices.filter(c => c.trim() !== ''),
+              answer: question.answer,
+              explanation_text: question.explanation_text,
+              question_metadata: question.meta
+            });
+          }
         }
+        
+        alert('試験を作成しました！');
+        navigate(`/exams/${exam.id}`);
       }
-      
-      alert('試験を作成しました！');
-      navigate(`/exams/${exam.id}`);
     } catch (error: any) {
-      console.error('Failed to create exam:', error);
+      console.error('Failed to save exam:', error);
       console.error('Error response:', error.response);
       
-      let errorMessage = '試験の作成に失敗しました';
+      let errorMessage = isEditMode ? '試験の更新に失敗しました' : '試験の作成に失敗しました';
       
       if (error.response?.data?.detail) {
         if (typeof error.response.data.detail === 'string') {
@@ -311,7 +532,7 @@ const CreateExam: React.FC = () => {
 
   return (
     <div className="max-w-6xl mx-auto">
-      <h1 className="text-3xl font-bold mb-6">試験作成</h1>
+      <h1 className="text-3xl font-bold mb-6">{isEditMode ? '試験編集' : '試験作成'}</h1>
 
       {/* タブ */}
       <div className="mb-6 border-b">
@@ -325,6 +546,16 @@ const CreateExam: React.FC = () => {
             }`}
           >
             手動作成
+          </button>
+          <button
+            onClick={() => setActiveTab('text')}
+            className={`px-4 py-2 font-semibold ${
+              activeTab === 'text'
+                ? 'border-b-2 border-primary-600 text-primary-600'
+                : 'text-gray-600'
+            }`}
+          >
+            テキストアップロード
           </button>
           <button
             onClick={() => setActiveTab('pdf')}
@@ -465,20 +696,191 @@ const CreateExam: React.FC = () => {
           {/* 問題一覧 */}
           {sections[currentSectionIndex]?.questions.length > 0 && (
             <div className="bg-white rounded-lg shadow-md p-6">
-              <h2 className="text-xl font-bold mb-4">
-                {sections[currentSectionIndex]?.title} - 問題一覧
-              </h2>
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-xl font-bold">
+                  {sections[currentSectionIndex]?.title} - 問題一覧
+                </h2>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allIndices = new Set(
+                        Array.from({ length: sections[currentSectionIndex].questions.length }, (_, i) => i)
+                      );
+                      if (editingQuestions.size === sections[currentSectionIndex].questions.length) {
+                        // 全て編集モードの場合は全て解除
+                        setEditingQuestions(new Set());
+                      } else {
+                        // そうでない場合は全て編集モードに
+                        setEditingQuestions(allIndices);
+                        // 編集モードにしたら全て展開
+                        setExpandedQuestions(allIndices);
+                      }
+                    }}
+                    className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 text-sm"
+                  >
+                    {editingQuestions.size === sections[currentSectionIndex].questions.length ? '全て保存' : '全て編集'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allIndices = new Set(
+                        Array.from({ length: sections[currentSectionIndex].questions.length }, (_, i) => i)
+                      );
+                      if (expandedQuestions.size === sections[currentSectionIndex].questions.length) {
+                        // 全て展開されている場合は全て閉じる
+                        setExpandedQuestions(new Set());
+                      } else {
+                        // そうでない場合は全て展開
+                        setExpandedQuestions(allIndices);
+                      }
+                    }}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm"
+                  >
+                    {expandedQuestions.size === sections[currentSectionIndex].questions.length ? '全て閉じる' : '全て展開'}
+                  </button>
+                </div>
+              </div>
               <div className="space-y-3">
-                {sections[currentSectionIndex].questions.map((q, idx) => (
+                {sections[currentSectionIndex].questions.map((q, idx) => {
+                  const isExpanded = expandedQuestions.has(idx);
+                  const isEditing = editingQuestions.has(idx);
+                  return (
                   <div key={idx} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
-                    <div className="flex justify-between items-start">
+                    <div className="flex justify-between items-start mb-2">
                       <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-2">
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const newExpanded = new Set(expandedQuestions);
+                              if (isExpanded) {
+                                newExpanded.delete(idx);
+                              } else {
+                                newExpanded.add(idx);
+                              }
+                              setExpandedQuestions(newExpanded);
+                            }}
+                            className="text-gray-500 hover:text-gray-700"
+                          >
+                            {isExpanded ? '▼' : '▶'}
+                          </button>
                           <span className="font-semibold text-gray-900">問{q.order}:</span>
                           <span className="text-xs bg-primary-100 text-primary-800 px-2 py-1 rounded">
                             {QUESTION_TYPE_INFO[q.type].name}
                           </span>
                         </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const newEditing = new Set(editingQuestions);
+                            if (isEditing) {
+                              newEditing.delete(idx);
+                            } else {
+                              newEditing.add(idx);
+                              // 編集モードにしたら展開する
+                              const newExpanded = new Set(expandedQuestions);
+                              newExpanded.add(idx);
+                              setExpandedQuestions(newExpanded);
+                            }
+                            setEditingQuestions(newEditing);
+                          }}
+                          className={`px-3 py-1 text-sm rounded ${
+                            isEditing 
+                              ? 'bg-green-100 text-green-700 hover:bg-green-200' 
+                              : 'bg-blue-100 text-blue-700 hover:bg-blue-200'
+                          }`}
+                        >
+                          {isEditing ? '保存' : '編集'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => deleteQuestion(idx)}
+                          className="px-3 py-1 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200"
+                        >
+                          削除
+                        </button>
+                      </div>
+                    </div>
+                    {isExpanded && (
+                    <div className="flex-1">
+                      {isEditing ? (
+                        // 編集モード
+                        <div className="space-y-3 mt-3">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">問題文</label>
+                            <textarea
+                              value={q.prompt_text}
+                              onChange={(e) => {
+                                const updated = [...sections];
+                                updated[currentSectionIndex].questions[idx].prompt_text = e.target.value;
+                                setSections(updated);
+                              }}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                              rows={3}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">選択肢</label>
+                            {q.choices.map((choice, cidx) => (
+                              <div key={cidx} className="flex items-center gap-2 mb-2">
+                                <input
+                                  type="checkbox"
+                                  checked={q.answer?.includes(choice) || false}
+                                  onChange={(e) => {
+                                    const updated = [...sections];
+                                    const currentAnswer = updated[currentSectionIndex].questions[idx].answer || [];
+                                    if (e.target.checked) {
+                                      updated[currentSectionIndex].questions[idx].answer = [...currentAnswer, choice];
+                                    } else {
+                                      updated[currentSectionIndex].questions[idx].answer = currentAnswer.filter(a => a !== choice);
+                                    }
+                                    setSections(updated);
+                                  }}
+                                  className="w-4 h-4"
+                                />
+                                <input
+                                  type="text"
+                                  value={choice}
+                                  onChange={(e) => {
+                                    const updated = [...sections];
+                                    const oldChoice = choice;
+                                    updated[currentSectionIndex].questions[idx].choices[cidx] = e.target.value;
+                                    // 答えも更新
+                                    const currentAnswer = updated[currentSectionIndex].questions[idx].answer || [];
+                                    if (currentAnswer.includes(oldChoice)) {
+                                      const answerIdx = currentAnswer.indexOf(oldChoice);
+                                      if (answerIdx !== -1) {
+                                        updated[currentSectionIndex].questions[idx].answer[answerIdx] = e.target.value;
+                                      }
+                                    }
+                                    setSections(updated);
+                                  }}
+                                  className="flex-1 px-3 py-1 border border-gray-300 rounded-md"
+                                  placeholder={`選択肢 ${cidx + 1}`}
+                                />
+                              </div>
+                            ))}
+                          </div>
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">解説</label>
+                            <textarea
+                              value={q.explanation_text}
+                              onChange={(e) => {
+                                const updated = [...sections];
+                                updated[currentSectionIndex].questions[idx].explanation_text = e.target.value;
+                                setSections(updated);
+                              }}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-md"
+                              rows={2}
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        // 表示モード
+                        <div>
                         <div className="text-gray-900 mb-2 leading-relaxed">
                           {q.type === 'kanji_reading' ? (
                             // 漢字読み: [単語] を下線付きで表示
@@ -564,12 +966,12 @@ const CreateExam: React.FC = () => {
                             <div
                               key={cidx}
                               className={`pl-4 ${
-                                q.answer.includes(choice)
+                                q.answer?.includes(choice)
                                   ? 'text-green-600 font-semibold'
                                   : 'text-gray-600'
                               }`}
                             >
-                              {cidx + 1}. {choice} {q.answer.includes(choice) && '✓'}
+                              {cidx + 1}. {choice} {q.answer?.includes(choice) && '✓'}
                             </div>
                           ))}
                         </div>
@@ -578,27 +980,29 @@ const CreateExam: React.FC = () => {
                             解説: {q.explanation_text}
                           </div>
                         )}
+                        </div>
+                      )}
                       </div>
-                      <div className="flex gap-2 ml-4">
-                        <button
-                          type="button"
-                          onClick={() => editQuestion(idx)}
-                          className="px-3 py-1 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
-                        >
-                          編集
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => deleteQuestion(idx)}
-                          className="px-3 py-1 text-sm bg-red-100 text-red-700 rounded hover:bg-red-200"
-                        >
-                          削除
-                        </button>
-                      </div>
-                    </div>
+                    )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
+              
+              {/* 全て保存ボタン（下部） */}
+              {editingQuestions.size > 0 && (
+                <div className="mt-4 flex justify-center">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingQuestions(new Set());
+                    }}
+                    className="px-8 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 text-lg font-semibold shadow-lg"
+                  >
+                    全て保存
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
@@ -957,23 +1361,263 @@ const CreateExam: React.FC = () => {
               disabled={loading}
               className="flex-1 px-6 py-3 bg-primary-600 text-white rounded-md hover:bg-primary-700 font-semibold disabled:opacity-50"
             >
-              {loading ? '作成中...' : '試験を作成'}
+              {loading 
+                ? (isEditMode ? '更新中...' : '作成中...') 
+                : (isEditMode ? '試験を更新' : '試験を作成')
+              }
             </button>
             <button
               type="button"
-              onClick={() => navigate('/exams')}
+              onClick={() => navigate(isEditMode ? '/my-page' : '/exams')}
               className="px-6 py-3 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300"
             >
               キャンセル
             </button>
           </div>
         </form>
+      ) : activeTab === 'text' ? (
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <h2 className="text-xl font-bold mb-4">テキストファイルアップロード</h2>
+          
+          <div className="mb-6">
+            <p className="text-gray-600 mb-4">
+              JLPT試験問題をテキストファイル（.txt または .md）でアップロードして、自動的に問題を抽出します。
+            </p>
+
+            <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <h4 className="font-semibold text-sm text-blue-900 mb-2">📝 推奨フォーマット</h4>
+              <pre className="text-xs text-blue-800 bg-white p-3 rounded overflow-x-auto">
+{`問1 次の言葉の読み方として最もよいものを選びなさい。
+経済
+1 けいざい
+2 けいさい
+3 きょうざい
+4 けいたい
+答え：1
+
+問2 次の言葉を漢字で書くとき、最もよいものを選びなさい。
+しょうらい
+1 将来
+2 勝来
+3 賞来
+4 証来
+答え：1`}
+              </pre>
+            </div>
+            
+            <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+              <input
+                type="file"
+                accept=".txt,.md"
+                onChange={handleTextUpload}
+                className="hidden"
+                id="text-upload"
+                disabled={loading}
+              />
+              <label
+                htmlFor="text-upload"
+                className="cursor-pointer inline-flex flex-col items-center"
+              >
+                <svg
+                  className="w-12 h-12 text-gray-400 mb-3"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                  />
+                </svg>
+                <span className="text-sm text-gray-600">
+                  {textFile ? textFile.name : 'テキストファイルを選択（.txt または .md）'}
+                </span>
+                {!textFile && (
+                  <span className="text-xs text-gray-500 mt-2">
+                    例: jlpt_questions.txt
+                  </span>
+                )}
+              </label>
+            </div>
+
+            {uploadProgress && (
+              <div className={`mt-4 p-4 rounded-lg ${
+                extractedQuestions.length === 0 ? 'bg-yellow-50 border border-yellow-200' : 'bg-blue-50 border border-blue-200'
+              }`}>
+                <p className={`text-sm ${
+                  extractedQuestions.length === 0 ? 'text-yellow-800' : 'text-blue-800'
+                }`}>{uploadProgress}</p>
+              </div>
+            )}
+
+            {/* デバッグ用：抽出テキストプレビュー */}
+            {extractedTextPreview && extractedQuestions.length === 0 && (
+              <div className="mt-4">
+                <details className="border rounded p-4">
+                  <summary className="cursor-pointer font-semibold text-sm text-gray-700">
+                    📄 アップロードされたテキストを確認（デバッグ用）
+                  </summary>
+                  <pre className="mt-2 text-xs text-gray-600 whitespace-pre-wrap bg-gray-50 p-3 rounded max-h-60 overflow-y-auto">
+                    {extractedTextPreview}
+                  </pre>
+                  <p className="mt-2 text-xs text-gray-500">
+                    ※ このテキストから問題番号や選択肢が検出できませんでした。
+                    フォーマットを確認してください。
+                  </p>
+                </details>
+              </div>
+            )}
+          </div>
+
+          {extractedQuestions.length > 0 && (
+            <div className="mb-6">
+              <h3 className="font-semibold mb-3">抽出された問題 ({extractedQuestions.length}個)</h3>
+              <div className="space-y-2 max-h-96 overflow-y-auto">
+                {extractedQuestions.map((q, idx) => (
+                  <div key={idx} className="border rounded p-3 bg-gray-50">
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <span className="font-semibold text-sm">問{q.order}</span>
+                        <p className="text-sm text-gray-700 mt-1 line-clamp-2">
+                          {q.prompt_text}
+                        </p>
+                        {q.choices && q.choices.length > 0 && (
+                          <p className="text-xs text-gray-500 mt-1">
+                            選択肢: {q.choices.length}個 | 答え: {q.answer?.join(', ')}
+                          </p>
+                        )}
+                      </div>
+                      <span className={`text-xs px-2 py-1 rounded ${
+                        q.answer && q.answer.length > 0 
+                          ? 'text-green-600 bg-green-100'
+                          : 'text-yellow-600 bg-yellow-100'
+                      }`}>
+                        {q.answer && q.answer.length > 0 ? '完了' : '要確認'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded">
+                <p className="text-sm text-blue-800">
+                  ✓ 抽出された問題は「手動作成」タブで確認・編集できます。
+                  内容を確認してから保存してください。
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
       ) : (
         <div className="bg-white rounded-lg shadow-md p-6">
           <h2 className="text-xl font-bold mb-4">PDFアップロード</h2>
-          <p className="text-gray-600 mb-4">
-            この機能は現在開発中です。PDFファイルから自動的に問題を抽出し、編集後に保存できるようになります。
-          </p>
+          
+          <div className="mb-6">
+            <p className="text-gray-600 mb-4">
+              JLPT試験問題のPDFファイルをアップロードして、自動的に問題を抽出します。
+              抽出後、内容を確認・編集してから保存できます。
+            </p>
+            
+            <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+              <input
+                type="file"
+                accept=".pdf"
+                onChange={handlePDFUpload}
+                className="hidden"
+                id="pdf-upload"
+                disabled={loading}
+              />
+              <label
+                htmlFor="pdf-upload"
+                className="cursor-pointer inline-flex flex-col items-center"
+              >
+                <svg
+                  className="w-12 h-12 text-gray-400 mb-3"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                  />
+                </svg>
+                <span className="text-sm text-gray-600">
+                  {pdfFile ? pdfFile.name : 'PDFファイルを選択またはドラッグ＆ドロップ'}
+                </span>
+                {!pdfFile && (
+                  <span className="text-xs text-gray-500 mt-2">
+                    例: N2 7-2019.pdf
+                  </span>
+                )}
+              </label>
+            </div>
+
+            {uploadProgress && (
+              <div className={`mt-4 p-4 rounded-lg ${
+                extractedQuestions.length === 0 ? 'bg-yellow-50 border border-yellow-200' : 'bg-blue-50 border border-blue-200'
+              }`}>
+                <p className={`text-sm ${
+                  extractedQuestions.length === 0 ? 'text-yellow-800' : 'text-blue-800'
+                }`}>{uploadProgress}</p>
+              </div>
+            )}
+
+            {/* デバッグ用：抽出テキストプレビュー */}
+            {extractedTextPreview && extractedQuestions.length === 0 && (
+              <div className="mt-4">
+                <details className="border rounded p-4">
+                  <summary className="cursor-pointer font-semibold text-sm text-gray-700">
+                    📄 抽出されたテキストを確認（デバッグ用）
+                  </summary>
+                  <pre className="mt-2 text-xs text-gray-600 whitespace-pre-wrap bg-gray-50 p-3 rounded max-h-60 overflow-y-auto">
+                    {extractedTextPreview}
+                  </pre>
+                  <p className="mt-2 text-xs text-gray-500">
+                    ※ このテキストから問題番号や選択肢が検出できませんでした。
+                    PDFの形式が対応していない可能性があります。
+                  </p>
+                </details>
+              </div>
+            )}
+          </div>
+
+          {extractedQuestions.length > 0 && (
+            <div className="mb-6">
+              <h3 className="font-semibold mb-3">抽出された問題 ({extractedQuestions.length}個)</h3>
+              <div className="space-y-2 max-h-96 overflow-y-auto">
+                {extractedQuestions.map((q, idx) => (
+                  <div key={idx} className="border rounded p-3 bg-gray-50">
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <span className="font-semibold text-sm">問{q.order}</span>
+                        <p className="text-sm text-gray-700 mt-1 line-clamp-2">
+                          {q.prompt_text}
+                        </p>
+                        {q.choices && q.choices.length > 0 && (
+                          <p className="text-xs text-gray-500 mt-1">
+                            選択肢: {q.choices.length}個
+                          </p>
+                        )}
+                      </div>
+                      <span className="text-xs text-yellow-600 bg-yellow-100 px-2 py-1 rounded">
+                        要確認
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4 p-4 bg-yellow-50 border border-yellow-200 rounded">
+                <p className="text-sm text-yellow-800">
+                  ⚠️ 抽出された問題は「手動作成」タブで確認・編集できます。
+                  正解と解説を必ず設定してから保存してください。
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
