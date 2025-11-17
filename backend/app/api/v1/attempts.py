@@ -8,10 +8,25 @@ from app.schemas import (
     AttemptCreate, AttemptStart, AttemptSubmit, AttemptFinish,
     AttemptItemResponse, Attempt as AttemptSchema
 )
-from app.auth import get_optional_user
+from app.auth import get_optional_user, get_current_user
 from app.models import User
 
 router = APIRouter()
+
+@router.get("/my-history", response_model=List[AttemptSchema])
+def get_my_attempts(
+    limit: int = 3,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """ログインユーザーの受験履歴取得"""
+    attempts = db.query(Attempt)\
+        .filter(Attempt.user_id == current_user.id)\
+        .order_by(Attempt.started_at.desc())\
+        .limit(limit)\
+        .all()
+    
+    return attempts
 
 @router.post("", response_model=AttemptStart, status_code=status.HTTP_201_CREATED)
 def start_attempt(

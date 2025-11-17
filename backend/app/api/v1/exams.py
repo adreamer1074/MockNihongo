@@ -16,7 +16,8 @@ def get_exams(
     level: Optional[str] = None,
     type: Optional[str] = None,
     is_public: Optional[bool] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user)
 ):
     """試験一覧取得"""
     query = db.query(Exam)
@@ -28,20 +29,38 @@ def get_exams(
     if is_public is not None:
         query = query.filter(Exam.is_public == is_public)
     else:
-        # デフォルトは公開試験のみ
-        query = query.filter(Exam.is_public == True)
+        # ログインしている場合は、公開試験 OR 自分が作成した試験を表示
+        if current_user:
+            from sqlalchemy import or_
+            query = query.filter(
+                or_(
+                    Exam.is_public == True,
+                    Exam.creator_id == current_user.id
+                )
+            )
+        else:
+            # 未ログインの場合は公開試験のみ
+            query = query.filter(Exam.is_public == True)
     
     exams = query.all()
     return exams
 
 @router.get("/{exam_id}", response_model=ExamSchema)
-def get_exam(exam_id: int, db: Session = Depends(get_db)):
+def get_exam(
+    exam_id: int,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user)
+):
     """試験詳細取得（正解は含まない）"""
     exam = db.query(Exam).filter(Exam.id == exam_id).first()
     if not exam:
         raise HTTPException(status_code=404, detail="Exam not found")
     
-    # 非公開試験の場合は作成者のみアクセス可能（今回は簡略化）
+    # 非公開試験の場合は作成者のみアクセス可能
+    if not exam.is_public:
+        if not current_user or exam.creator_id != current_user.id:
+            raise HTTPException(status_code=403, detail="この試験は非公開です")
+    
     return exam
 
 @router.get("/{exam_id}/with-answers", response_model=ExamWithAnswers)
@@ -114,7 +133,7 @@ def delete_exam(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """試験削除"""
+    """試験削除（受験履歴も含めて削除）"""
     exam = db.query(Exam).filter(Exam.id == exam_id).first()
     if not exam:
         raise HTTPException(status_code=404, detail="Exam not found")

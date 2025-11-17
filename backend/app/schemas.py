@@ -212,6 +212,7 @@ class Attempt(BaseModel):
     total_score: Optional[int]
     is_passed: Optional[bool]
     raw_result: Optional[dict]
+    exam: Optional['ExamList'] = None  # 試験情報を含める
 
     class Config:
         from_attributes = True

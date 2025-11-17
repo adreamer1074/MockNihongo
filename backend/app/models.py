@@ -77,7 +77,7 @@ class Exam(Base):
     # Relationships
     creator = relationship("User", back_populates="exams")
     sections = relationship("Section", back_populates="exam", cascade="all, delete-orphan")
-    attempts = relationship("Attempt", back_populates="exam")
+    attempts = relationship("Attempt", back_populates="exam", cascade="all, delete-orphan")
 
 class Section(Base):
     __tablename__ = "sections"
