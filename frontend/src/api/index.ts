@@ -142,4 +142,17 @@ export const pdfAPI = {
     });
     return response.data;
   },
+  
+  ocrProcess: async (file: File): Promise<any> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    
+    const response = await api.post('/pdf/ocr', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+      timeout: 120000, // 120秒でタイムアウト（OCRは時間がかかる）
+    });
+    return response.data;
+  },
 };

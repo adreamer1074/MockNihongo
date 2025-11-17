@@ -33,7 +33,7 @@ const CreateExam: React.FC = () => {
   const { examId } = useParams<{ examId: string }>();
   const isEditMode = !!examId;
   const { isAuthenticated } = useAuthStore();
-  const [activeTab, setActiveTab] = useState<'manual' | 'pdf' | 'text'>('manual');
+  const [activeTab, setActiveTab] = useState<'manual' | 'pdf' | 'text' | 'ocr'>('manual');
   const [loading, setLoading] = useState(false);
   const [editingQuestionIndex, setEditingQuestionIndex] = useState<number | null>(null);
   const [expandedQuestions, setExpandedQuestions] = useState<Set<number>>(new Set());
@@ -45,6 +45,11 @@ const CreateExam: React.FC = () => {
   const [uploadProgress, setUploadProgress] = useState<string>('');
   const [extractedQuestions, setExtractedQuestions] = useState<any[]>([]);
   const [extractedTextPreview, setExtractedTextPreview] = useState<string>('');
+  
+  // OCR関連
+  const [ocrFile, setOcrFile] = useState<File | null>(null);
+  const [ocrText, setOcrText] = useState<string>('');
+  const [isOcrProcessing, setIsOcrProcessing] = useState(false);
 
   // 試験基本情報
   const [title, setTitle] = useState('');
@@ -431,6 +436,102 @@ const CreateExam: React.FC = () => {
     }
   };
 
+  const handleOcrUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const allowedTypes = ['application/pdf', 'image/png', 'image/jpeg', 'image/jpg'];
+    if (!allowedTypes.includes(file.type)) {
+      alert('PDF、PNG、JPEGファイルのみアップロード可能です');
+      return;
+    }
+
+    setOcrFile(file);
+    setIsOcrProcessing(true);
+    setUploadProgress('OCR処理中...');
+
+    try {
+      const result = await pdfAPI.ocrProcess(file);
+      
+      if (result.success) {
+        setOcrText(result.extracted_text);
+        setUploadProgress('✅ OCR処理が完了しました。テキストを確認・編集して「このテキストから問題を抽出」をクリックしてください。');
+      }
+    } catch (error: any) {
+      console.error('OCR processing failed:', error);
+      setUploadProgress('');
+      alert('OCR処理に失敗しました: ' + (error.response?.data?.detail || error.message));
+    } finally {
+      setIsOcrProcessing(false);
+    }
+  };
+
+  const processOcrText = async () => {
+    if (!ocrText.trim()) {
+      alert('テキストが空です');
+      return;
+    }
+
+    setLoading(true);
+    setUploadProgress('問題を抽出中...');
+
+    try {
+      // テキストをBlobに変換してアップロード
+      const blob = new Blob([ocrText], { type: 'text/plain;charset=utf-8' });
+      const file = new File([blob], 'ocr_extracted.txt', { type: 'text/plain' });
+      
+      const result = await pdfAPI.uploadText(file);
+      
+      if (result.success && result.questions.length > 0) {
+        // 抽出した問題を現在のセクションに自動追加
+        const updated = [...sections];
+        const startIndex = updated[currentSectionIndex].questions.length;
+        updated[currentSectionIndex].questions = [
+          ...updated[currentSectionIndex].questions,
+          ...result.questions.map((q: any, idx: number) => {
+            let answerTexts: string[] = [];
+            if (q.answer && q.answer.length > 0 && q.choices && q.choices.length > 0) {
+              answerTexts = q.answer.map((answerNum: string) => {
+                const index = parseInt(answerNum) - 1;
+                return q.choices[index] || '';
+              }).filter((text: string) => text !== '');
+            }
+            
+            return {
+              order: startIndex + idx + 1,
+              type: 'kanji_reading' as QuestionType,
+              prompt_text: q.prompt_text,
+              choices: q.choices || ['', '', '', ''],
+              answer: answerTexts,
+              explanation_text: q.explanation_text || '',
+              meta: q.metadata || {}
+            };
+          })
+        ];
+        setSections(updated);
+        
+        const allIndices = new Set(
+          Array.from({ length: updated[currentSectionIndex].questions.length }, (_, i) => i)
+        );
+        setExpandedQuestions(allIndices);
+        
+        setActiveTab('manual');
+        setUploadProgress(`${result.questions.length}個の問題を抽出しました。`);
+        
+        // OCRテキストをクリア
+        setOcrText('');
+        setOcrFile(null);
+      } else {
+        setUploadProgress('⚠️ 問題を抽出できませんでした。テキストの形式を確認してください。');
+      }
+    } catch (error: any) {
+      console.error('Text processing failed:', error);
+      alert('問題の抽出に失敗しました: ' + (error.response?.data?.detail || error.message));
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const cancelEdit = () => {
     setEditingQuestionIndex(null);
     setCurrentQuestion({
@@ -558,6 +659,16 @@ const CreateExam: React.FC = () => {
             テキストアップロード
           </button>
           <button
+            onClick={() => setActiveTab('ocr')}
+            className={`px-4 py-2 font-semibold ${
+              activeTab === 'ocr'
+                ? 'border-b-2 border-primary-600 text-primary-600'
+                : 'text-gray-600'
+            }`}
+          >
+            画像/PDF OCR
+          </button>
+          <button
             onClick={() => setActiveTab('pdf')}
             className={`px-4 py-2 font-semibold ${
               activeTab === 'pdf'
@@ -565,7 +676,7 @@ const CreateExam: React.FC = () => {
                 : 'text-gray-600'
             }`}
           >
-            PDFアップロード
+            PDFアップロード（テキスト）
           </button>
         </div>
       </div>
@@ -1508,6 +1619,116 @@ const CreateExam: React.FC = () => {
               </div>
             </div>
           )}
+        </div>
+      ) : activeTab === 'ocr' ? (
+        <div className="bg-white rounded-lg shadow-md p-6">
+          <h2 className="text-xl font-bold mb-4">画像OCR処理</h2>
+          
+          <div className="mb-6">
+            <p className="text-gray-600 mb-4">
+              画像ベースのPDFや画像ファイル（PNG/JPEG）をアップロードして、OCR処理でテキストを抽出します。
+              抽出されたテキストを編集してから問題として登録できます。
+            </p>
+            
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+              <p className="text-sm text-yellow-800">
+                <strong>⚠️ 注意:</strong> この機能はTesseract OCRを使用しております。
+              </p>
+            </div>
+            
+            <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+              <input
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg"
+                onChange={handleOcrUpload}
+                className="hidden"
+                id="ocr-upload"
+                disabled={isOcrProcessing}
+              />
+              <label
+                htmlFor="ocr-upload"
+                className="cursor-pointer inline-flex flex-col items-center"
+              >
+                <svg
+                  className="w-12 h-12 text-gray-400 mb-3"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                  />
+                </svg>
+                <span className="text-sm text-gray-600">
+                  {ocrFile ? ocrFile.name : 'ファイルを選択（PDF、PNG、JPEG）'}
+                </span>
+                {!ocrFile && (
+                  <span className="text-xs text-gray-500 mt-2">
+                    画像ベースのPDFまたは画像ファイル
+                  </span>
+                )}
+              </label>
+            </div>
+
+            {uploadProgress && (
+              <div className="mt-4 p-4 rounded-lg bg-blue-50 border border-blue-200">
+                <p className="text-sm text-blue-800">{uploadProgress}</p>
+              </div>
+            )}
+
+            {ocrText && (
+              <div className="mt-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  抽出されたテキスト（編集可能）
+                </label>
+                <textarea
+                  value={ocrText}
+                  onChange={(e) => setOcrText(e.target.value)}
+                  className="w-full h-96 px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-primary-500 font-mono text-sm"
+                  placeholder="OCR処理されたテキストがここに表示されます..."
+                />
+                <div className="mt-4 flex gap-3">
+                  <button
+                    type="button"
+                    onClick={processOcrText}
+                    disabled={loading || !ocrText.trim()}
+                    className="px-6 py-2 bg-primary-600 text-white rounded-md hover:bg-primary-700 disabled:opacity-50"
+                  >
+                    このテキストから問題を抽出
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const blob = new Blob([ocrText], { type: 'text/plain;charset=utf-8' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = 'ocr_extracted.txt';
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="px-6 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300"
+                  >
+                    テキストファイルとしてダウンロード
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setOcrText('');
+                      setOcrFile(null);
+                      setUploadProgress('');
+                    }}
+                    className="px-6 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300"
+                  >
+                    クリア
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <div className="bg-white rounded-lg shadow-md p-6">
